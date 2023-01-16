@@ -22,9 +22,6 @@ positive_infinity = float('inf')
 resolution = ()
 data = []
 thread_list = []
-cx = 0
-cy = 0
-cz = 0
 delta_rotation_h = 0
 delta_rotation_v = 0
 thread_num = 8
@@ -70,7 +67,7 @@ def Loop(thread_id, start, end):
             while not collision_result:
                 h_rand = h + random.uniform(-delta_rotation_h/10000,delta_rotation_h/10000)
                 v_rand = v + random.uniform(-delta_rotation_v/10000,delta_rotation_v/10000)
-                collision_result = mesh_raycast.raycast(source=(cx,cy,cz), direction=(cos(v_rand)*cos(h_rand),cos(v_rand)*sin(h_rand),sin(v_rand)), mesh=triangles)
+                collision_result = mesh_raycast.raycast(source=(0,0,0), direction=(cos(v_rand)*cos(h_rand),cos(v_rand)*sin(h_rand),sin(v_rand)), mesh=triangles)
             distance = min(collision_result, key=lambda x: x['distance'])['distance']
             lock.acquire()
             try:
@@ -84,7 +81,7 @@ def Loop(thread_id, start, end):
 def Calculate():
     global filepath,filename,dirname,PI
     global box_x,box_y,widget,label4,openfile,label_min,label_max,box_thread
-    global resolution,cx,cy,cz,delta_rotation_h,delta_rotation_v,data
+    global resolution,delta_rotation_h,delta_rotation_v,data
     global thread_num,thread_list
 
     openfile.setEnabled(False)
@@ -94,11 +91,6 @@ def Calculate():
     box_thread.setEnabled(False)
     resolution = (box_x.value(),box_y.value())
     thread_num = box_thread.value()
-    mesh = trimesh.load(filepath)
-    center = mesh.center_mass
-    cx = center[0]
-    cy = center[1]
-    cz = center[2]
     delta_rotation_h = 2*PI / resolution[0]
     delta_rotation_v = PI / (resolution[1]-1)
     data = np.zeros((resolution[1],resolution[0]))
