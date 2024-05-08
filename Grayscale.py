@@ -3,23 +3,24 @@ import taichi.math as tm
 from taichi.math import (vec3, inf)
 import numpy as np
 import trimesh
+import random
+
 from PIL import Image
 from math import *
-import random
+
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QSpinBox, QComboBox, QFileDialog)
 from PyQt5.QtCore import QRect
 from PyQt5.QtGui import QFont
+
+import multiprocessing
+from multiprocessing import shared_memory
 import sys
 import os
 import time
-import multiprocessing
 
 filepath = ""
 filename = ""
 dirname = ""
-
-resolution = ()
-data = []
 
 arch = ti.cpu
 arch_list = ["CPU", "GPU"]
@@ -89,7 +90,7 @@ def Intersect(ray : Ray, tri : Triangle) -> HitResult:
     return hit_res
 
 @ti.kernel
-def Loop(
+def CreateGrayscaleMap(
         frame : ti.types.ndarray(),
         verts : ti.types.ndarray(),
         faces : ti.types.ndarray(),
@@ -118,9 +119,18 @@ def Loop(
             frame[i, j] = ray.t
         count[0] += 1
 
+def Calculate(arch, res, verts, faces):
+    ti.init(arch=arch, random_seed=int(time.time()))
+    frame_mem = shared_memory.SharedMemory(name="frame")
+    count_mem = shared_memory.SharedMemory(name="count")
+    frame = np.ndarray((res[1], res[0]), dtype=np.float32, buffer=frame_mem.buf)
+    count = np.ndarray((1,), dtype=np.int32, buffer=count_mem.buf)
+    CreateGrayscaleMap(frame, verts, faces, count)
+    frame_mem.close()
+    count_mem.close()
+
 def Generate():
-    global box_x,box_y,widget,label4,label_min,label_max,box_arch,arch
-    global resolution,data,count
+    global box_x,box_y,widget,label4,label_min,label_max,box_arch
 
     openfile.setEnabled(False)
     box_x.setEnabled(False)
@@ -133,16 +143,18 @@ def Generate():
     else:
         arch = ti.gpu
 
-    ti.init(arch=arch, random_seed=time.time())
     resolution = (box_x.value(),box_y.value())
-    data = np.zeros((resolution[1], resolution[0]), dtype=np.float32)
+    data_mem = shared_memory.SharedMemory(name="frame", create=True, size=resolution[0] * resolution[1] * 4)
+    count_mem = shared_memory.SharedMemory(name="count", create=True, size=4)
+    data = np.ndarray((resolution[1], resolution[0]), dtype=np.float32, buffer=data_mem.buf)
+    count = np.ndarray((1,), dtype=np.int32, buffer=count_mem.buf)
+    count[0] = 0
     mesh = trimesh.load(filepath)
-    count = np.array([0])
 
-    loop = multiprocessing.Process(Loop, (data, mesh.vertices, mesh.faces, count))
-    loop.start()
+    process = multiprocessing.Process(target=Calculate, args=(arch, resolution, mesh.vertices, mesh.faces))
+    process.start()
 
-    while loop.is_alive():
+    while process.is_alive():
         QApplication.processEvents()
         label4.setText("Generating Grayscale %.2f%%..."%(count[0] * 100.0 / (resolution[0] * resolution[1])))
 
@@ -162,6 +174,11 @@ def Generate():
     widget.setWindowTitle("Grayscale")
     label_min.setText("Minimum distance: %.6f"%(min_value))
     label_max.setText("Maximum distance: %.6f"%(max_value))
+
+    data_mem.close()
+    data_mem.close()
+    count_mem.unlink()
+    count_mem.unlink()
 
     openfile.setEnabled(True)
     box_x.setEnabled(True)
