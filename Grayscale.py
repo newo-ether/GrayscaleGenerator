@@ -1,10 +1,12 @@
+import taichi as ti
+import taichi.math as tm
+from taichi.math import (vec3, inf)
 import numpy as np
 import trimesh
-import mesh_raycast
 from PIL import Image
 from math import *
 import random
-from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QSpinBox, QFileDialog)
+from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QSpinBox, QComboBox, QFileDialog)
 from PyQt5.QtCore import QRect
 from PyQt5.QtGui import QFont
 import sys
@@ -12,28 +14,24 @@ import os
 import time
 import threading
 
-lock = threading.Lock()
-
 filepath = ""
 filename = ""
 dirname = ""
-PI = 3.14159265359
-positive_infinity = float('inf')
+
 resolution = ()
 data = []
-thread_list = []
-delta_rotation_h = 0
-delta_rotation_v = 0
-thread_num = 8
-should_exit = False
+
+arch = ti.cpu
+arch_list = ["CPU", "GPU"]
+
+count = 0
 
 class Widget(QWidget):
     def __init__(self):
         super(Widget,self).__init__()
     
     def closeEvent(self,event):
-        global should_exit
-        should_exit = True
+        os._exit(0)
 
 def OpenFile():
     global filepath,filename,dirname
@@ -55,93 +53,115 @@ def OpenFile():
         button.setEnabled(False)
         widget.setWindowTitle("Grayscale")
 
-def Loop(thread_id, start, end):
-    global data,resolution,delta_rotation_h,filepath,thread_list
-    mesh = trimesh.load(filepath)
-    for v_num in range(start,end+1) :
-        for h_num in range(0,resolution[0]) :
-            h = h_num * delta_rotation_h
-            v = PI/2 - v_num * delta_rotation_v
-            triangles = np.array(mesh.vertices[mesh.faces], dtype='f4')
-            collision_result = False
-            while not collision_result:
-                h_rand = h + random.uniform(-delta_rotation_h/10000,delta_rotation_h/10000)
-                v_rand = v + random.uniform(-delta_rotation_v/10000,delta_rotation_v/10000)
-                collision_result = mesh_raycast.raycast(source=(0,0,0), direction=(cos(v_rand)*cos(h_rand),cos(v_rand)*sin(h_rand),sin(v_rand)), mesh=triangles)
-            distance = min(collision_result, key=lambda x: x['distance'])['distance']
-            lock.acquire()
-            try:
-                data[v_num][h_num] = distance
-                thread_list[thread_id] = (v_num,h_num)
-            finally:
-                lock.release()
-            if should_exit:
-                return
+@ti.dataclass
+class Ray:
+    origin : vec3
+    dir : vec3
+    t : float
 
-def Calculate():
-    global filepath,filename,dirname,PI
-    global box_x,box_y,widget,label4,openfile,label_min,label_max,box_thread
-    global resolution,delta_rotation_h,delta_rotation_v,data
-    global thread_num,thread_list
+@ti.dataclass
+class Triangle:
+    p1 : vec3
+    p2 : vec3
+    p3 : vec3
+
+@ti.dataclass
+class HitResult:
+    isHit : ti.u1
+    hitPoint : vec3
+    dist : float
+
+@ti.func
+def Intersect(ray : Ray, tri : Triangle) -> HitResult:
+    norm = tm.normalize(tm.cross(tri.p2 - tri.p1, tri.p3 - tri.p2))
+    barycenter = (tri.p1 + tri.p2 + tri.p3) / 3
+    t = tm.dot(barycenter - ray.origin, norm) / tm.dot(ray.dir, norm)
+    hit_res = HitResult(0, vec3(0), inf)
+    if t >= 0 and t < ray.t:
+        p = ray.origin + t * ray.dir
+        b1 = tm.dot(tm.cross(tri.p2 - tri.p1, p - tri.p1), norm)
+        b2 = tm.dot(tm.cross(tri.p3 - tri.p2, p - tri.p2), norm)
+        b3 = tm.dot(tm.cross(tri.p1 - tri.p3, p - tri.p3), norm)
+        if (b1 >= 0 and b2 >= 0 and b3 >= 0) or (b1 <= 0 and b2 <= 0 and b3 <= 0):
+            hit_res = HitResult(1, p, t)
+    return hit_res
+
+@ti.kernel
+def Loop(
+        frame : ti.types.ndarray(),
+        verts : ti.types.ndarray(),
+        faces : ti.types.ndarray(),
+    ):
+    dh = 2 * pi / frame.shape[1]
+    dv = pi / frame.shape[0]
+    for i,j in ti.ndrange(frame.shape[0], frame.shape[1]):
+        h = j * dh
+        v = pi / 2 - i * dv
+        isHit : ti.u1 = ti.cast(0, ti.u1)
+        ray = Ray(origin=vec3(0),
+                  dir=tm.normalize(vec3(tm.cos(v) * tm.cos(h), tm.cos(v) * tm.sin(h), tm.sin(v))),
+                  t=inf)
+        for n in range(0, faces.shape[0]):
+            p1 = vec3(verts[faces[n, 0], 0], verts[faces[n, 0], 1], verts[faces[n, 0], 2])
+            p2 = vec3(verts[faces[n, 1], 0], verts[faces[n, 1], 1], verts[faces[n, 1], 2])
+            p3 = vec3(verts[faces[n, 2], 0], verts[faces[n, 2], 1], verts[faces[n, 2], 2])
+            result = Intersect(ray, Triangle(p1, p2, p3))
+            if result.isHit == 1:
+                isHit = ti.cast(1, ti.u1)
+                ray.t = result.dist
+        if isHit == 0:
+            frame[i, j] = 0.0
+        else:
+            frame[i, j] = ray.t
+        count = count + 1
+
+def Generate():
+    global box_x,box_y,widget,label4,label_min,label_max,box_arch,arch
+    global resolution,data,count
 
     openfile.setEnabled(False)
     box_x.setEnabled(False)
     box_y.setEnabled(False)
     button.setEnabled(False)
-    box_thread.setEnabled(False)
+    box_arch.setEnabled(False)
+
+    if box_arch.currentText() == "CPU":
+        arch = ti.cpu
+    else:
+        arch = ti.gpu
+
+    label4.setText("Generating Grayscale...")
+
+    ti.init(arch=arch)
     resolution = (box_x.value(),box_y.value())
-    thread_num = box_thread.value()
-    delta_rotation_h = 2*PI / resolution[0]
-    delta_rotation_v = PI / (resolution[1]-1)
-    data = np.zeros((resolution[1],resolution[0]))
-    label4.setText("Generating Grayscale 0.00%...")
+    data = np.zeros((resolution[1], resolution[0]), dtype=np.float32)
+    mesh = trimesh.load(filepath)
+    count = 0
 
-    threads = []
-    thread_list = []
-    interval = int(resolution[1]/thread_num)
-    for n in range(0,thread_num) :
-        start = n*interval
-        end = (n+1)*interval-1
-        if n == thread_num-1 :
-            end = resolution[1]-1
-        threads.append(threading.Thread(target=Loop,args=(n,start,end)))
-        thread_list.append((start,0))
-    for t in threads :
-        t.start()
+    Loop(data, mesh.vertices, mesh.faces)
 
-    while threading.active_count() > 1 :
-        QApplication.processEvents()
-        total = 0
-        for n in range(0,thread_num) :
-            start = n*interval
-            v_num = thread_list[n][0] - start
-            h_num = thread_list[n][1]
-            total += v_num * resolution[0] + h_num
-        label4.setText("Generating Grayscale %.2f%%..."%(total * 100 / (resolution[0]*resolution[1])))
-        if should_exit:
-            return
+    localtime = time.localtime(time.time())
+    timestr = str(localtime.tm_hour).zfill(2) + str(localtime.tm_min).zfill(2)
+    save_name = str(filename) + "_" + str(resolution[0]) + "x" + str(resolution[1]) + "_" + str(timestr) + ".txt"
+    np.savetxt(dirname + '\\' + save_name, data)
 
-    min_distance = data.min()
-    max_distance = data.max()
-    min_value = min_distance
-    max_value = max_distance
+    min_value = data.min()
+    max_value = data.max()
     data = (data-min_value)/(max_value-min_value)*255
     image = Image.fromarray(data)
     image = image.convert('RGB')
-    localtime = time.localtime(time.time())
-    timestr = str(localtime.tm_hour).zfill(2) + str(localtime.tm_min).zfill(2)
     save_name = str(filename) + "_" + str(resolution[0]) + "x" + str(resolution[1]) + "_" + str(timestr) + ".png"
     image.save(dirname + '\\' + save_name)
     label4.setText("Successfully saved to " + save_name)
     widget.setWindowTitle("Grayscale")
-    label_min.setText("Minimum radius: %.6f"%(min_distance))
-    label_max.setText("Maximum radius: %.6f"%(max_distance))
+    label_min.setText("Minimum radius: %.6f"%(min_value))
+    label_max.setText("Maximum radius: %.6f"%(max_value))
 
     openfile.setEnabled(True)
     box_x.setEnabled(True)
     box_y.setEnabled(True)
     button.setEnabled(False)
-    box_thread.setEnabled(True)
+    box_arch.setEnabled(True)
 
 if __name__ == '__main__' :
     app = QApplication(sys.argv)
@@ -174,19 +194,17 @@ if __name__ == '__main__' :
     box_y.setMinimum(10)
     box_y.setValue(512)
     box_y.setFont(QFont('Arial'))
-    label5 = QLabel("Thread Number: ", widget)
+    label5 = QLabel("Architechture: ", widget)
     label5.setGeometry(QRect(10,90,120,25))
     label5.setFont(QFont('Arial'))
-    box_thread = QSpinBox(widget)
-    box_thread.setGeometry(QRect(130,90,80,25))
-    box_thread.setMaximum(128)
-    box_thread.setMinimum(1)
-    box_thread.setValue(4)
-    box_thread.setFont(QFont('Arial'))
+    box_arch = QComboBox(widget)
+    box_arch.addItems(arch_list)
+    box_arch.setGeometry(QRect(130,90,80,25))
+    box_arch.setFont(QFont('Arial'))
     button = QPushButton("Generate", widget)
     button.setGeometry(QRect(10,130,330,30))
     button.setFont(QFont('Arial'))
-    button.clicked.connect(Calculate)
+    button.clicked.connect(Generate)
     label4 = QLabel("Ready to Generate.", widget)
     label4.setGeometry(QRect(10,220,330,25))
     label4.setFont(QFont('Arial',8))
@@ -201,7 +219,7 @@ if __name__ == '__main__' :
     box_x.setEnabled(True)
     box_y.setEnabled(True)
     button.setEnabled(False)
-    box_thread.setEnabled(True)
+    box_arch.setEnabled(True)
 
     widget.show()
     sys.exit(app.exec_())
