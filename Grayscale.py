@@ -12,7 +12,7 @@ from PyQt5.QtGui import QFont
 import sys
 import os
 import time
-import threading
+import multiprocessing
 
 filepath = ""
 filename = ""
@@ -23,8 +23,6 @@ data = []
 
 arch = ti.cpu
 arch_list = ["CPU", "GPU"]
-
-count = 0
 
 class Widget(QWidget):
     def __init__(self):
@@ -69,7 +67,11 @@ class Triangle:
 class HitResult:
     isHit : ti.u1
     hitPoint : vec3
-    dist : float
+    t : float
+
+@ti.func
+def rand() -> ti.f32:
+    return ti.random(dtype=float) * 2 - 1
 
 @ti.func
 def Intersect(ray : Ray, tri : Triangle) -> HitResult:
@@ -91,12 +93,13 @@ def Loop(
         frame : ti.types.ndarray(),
         verts : ti.types.ndarray(),
         faces : ti.types.ndarray(),
+        count : ti.types.ndarray(),
     ):
     dh = 2 * pi / frame.shape[1]
     dv = pi / frame.shape[0]
     for i,j in ti.ndrange(frame.shape[0], frame.shape[1]):
-        h = j * dh
-        v = pi / 2 - i * dv
+        h = j * dh + rand() * 1e-5
+        v = pi / 2 - i * dv + rand() * 1e-5
         isHit : ti.u1 = ti.cast(0, ti.u1)
         ray = Ray(origin=vec3(0),
                   dir=tm.normalize(vec3(tm.cos(v) * tm.cos(h), tm.cos(v) * tm.sin(h), tm.sin(v))),
@@ -108,12 +111,12 @@ def Loop(
             result = Intersect(ray, Triangle(p1, p2, p3))
             if result.isHit == 1:
                 isHit = ti.cast(1, ti.u1)
-                ray.t = result.dist
+                ray.t = result.t
         if isHit == 0:
             frame[i, j] = 0.0
         else:
             frame[i, j] = ray.t
-        count = count + 1
+        count[0] += 1
 
 def Generate():
     global box_x,box_y,widget,label4,label_min,label_max,box_arch,arch
@@ -130,15 +133,18 @@ def Generate():
     else:
         arch = ti.gpu
 
-    label4.setText("Generating Grayscale...")
-
-    ti.init(arch=arch)
+    ti.init(arch=arch, random_seed=time.time())
     resolution = (box_x.value(),box_y.value())
     data = np.zeros((resolution[1], resolution[0]), dtype=np.float32)
     mesh = trimesh.load(filepath)
-    count = 0
+    count = np.array([0])
 
-    Loop(data, mesh.vertices, mesh.faces)
+    loop = multiprocessing.Process(Loop, (data, mesh.vertices, mesh.faces, count))
+    loop.start()
+
+    while loop.is_alive():
+        QApplication.processEvents()
+        label4.setText("Generating Grayscale %.2f%%..."%(count[0] * 100.0 / (resolution[0] * resolution[1])))
 
     localtime = time.localtime(time.time())
     timestr = str(localtime.tm_hour).zfill(2) + str(localtime.tm_min).zfill(2)
@@ -154,8 +160,8 @@ def Generate():
     image.save(dirname + '\\' + save_name)
     label4.setText("Successfully saved to " + save_name)
     widget.setWindowTitle("Grayscale")
-    label_min.setText("Minimum radius: %.6f"%(min_value))
-    label_max.setText("Maximum radius: %.6f"%(max_value))
+    label_min.setText("Minimum distance: %.6f"%(min_value))
+    label_max.setText("Maximum distance: %.6f"%(max_value))
 
     openfile.setEnabled(True)
     box_x.setEnabled(True)
