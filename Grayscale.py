@@ -13,7 +13,6 @@ from PyQt5.QtCore import QRect
 from PyQt5.QtGui import QFont
 
 import multiprocessing
-from multiprocessing import shared_memory
 import sys
 import os
 import time
@@ -94,7 +93,6 @@ def CreateGrayscaleMap(
         frame : ti.types.ndarray(),
         verts : ti.types.ndarray(),
         faces : ti.types.ndarray(),
-        count : ti.types.ndarray(),
     ):
     dh = 2 * pi / frame.shape[1]
     dv = pi / frame.shape[0]
@@ -117,17 +115,13 @@ def CreateGrayscaleMap(
             frame[i, j] = 0.0
         else:
             frame[i, j] = ray.t
-        count[0] += 1
 
-def Calculate(arch, res, verts, faces):
+def Calculate(arch, frame_name, res, verts, faces):
     ti.init(arch=arch, random_seed=int(time.time()))
-    frame_mem = shared_memory.SharedMemory(name="frame")
-    count_mem = shared_memory.SharedMemory(name="count")
+    frame_mem = shared_memory.SharedMemory(name=frame_name)
     frame = np.ndarray((res[1], res[0]), dtype=np.float32, buffer=frame_mem.buf)
-    count = np.ndarray((1,), dtype=np.int32, buffer=count_mem.buf)
-    CreateGrayscaleMap(frame, verts, faces, count)
+    CreateGrayscaleMap(frame, verts, faces)
     frame_mem.close()
-    count_mem.close()
 
 def Generate():
     global box_x,box_y,widget,label4,label_min,label_max,box_arch
@@ -138,25 +132,23 @@ def Generate():
     button.setEnabled(False)
     box_arch.setEnabled(False)
 
+    label4.setText("Generating Grayscale Map...")
+
     if box_arch.currentText() == "CPU":
         arch = ti.cpu
     else:
         arch = ti.gpu
 
     resolution = (box_x.value(),box_y.value())
-    data_mem = shared_memory.SharedMemory(name="frame", create=True, size=resolution[0] * resolution[1] * 4)
-    count_mem = shared_memory.SharedMemory(name="count", create=True, size=4)
+    data_mem = shared_memory.SharedMemory(create=True, size=resolution[0] * resolution[1] * 4)
     data = np.ndarray((resolution[1], resolution[0]), dtype=np.float32, buffer=data_mem.buf)
-    count = np.ndarray((1,), dtype=np.int32, buffer=count_mem.buf)
-    count[0] = 0
     mesh = trimesh.load(filepath)
 
-    process = multiprocessing.Process(target=Calculate, args=(arch, resolution, mesh.vertices, mesh.faces))
+    process = multiprocessing.Process(target=Calculate, args=(arch, data_mem.name, resolution, mesh.vertices, mesh.faces))
     process.start()
 
     while process.is_alive():
         QApplication.processEvents()
-        label4.setText("Generating Grayscale %.2f%%..."%(count[0] * 100.0 / (resolution[0] * resolution[1])))
 
     localtime = time.localtime(time.time())
     timestr = str(localtime.tm_hour).zfill(2) + str(localtime.tm_min).zfill(2)
@@ -177,8 +169,6 @@ def Generate():
 
     data_mem.close()
     data_mem.close()
-    count_mem.unlink()
-    count_mem.unlink()
 
     openfile.setEnabled(True)
     box_x.setEnabled(True)
