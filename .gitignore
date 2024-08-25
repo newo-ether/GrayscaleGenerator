@@ -1,0 +1,4 @@
+build/
+dist/
+GrayscaleGenerator.spec
+resource.py
