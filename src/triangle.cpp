@@ -6,15 +6,15 @@
 
 Triangle::Triangle() {}
 
-Triangle::Triangle(Vector3D v0,
-                   Vector3D v1,
-                   Vector3D v2,
+Triangle::Triangle(Vector3D p0,
+                   Vector3D p1,
+                   Vector3D p2,
                    Vector2D uv0,
                    Vector2D uv1,
                    Vector2D uv2) {
-    p[0] = v0;
-    p[1] = v1;
-    p[2] = v2;
+    p[0] = p0;
+    p[1] = p1;
+    p[2] = p2;
 
     uv[0] = uv0;
     uv[1] = uv1;

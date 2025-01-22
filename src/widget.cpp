@@ -720,10 +720,10 @@ void Widget::handleRenderingResult(int result,
     QString format = ui->imageFormatComboBox->currentText();
 
     grayscaleMapSavePath = grayscaleMapOutputBaseName
-                    + "_"
-                    + timeString
-                    + "."
-                    + format.toLower();
+                           + "_"
+                           + timeString
+                           + "."
+                           + format.toLower();
 
     colorMapSavePath = colorMapOutputBaseName
                        + "_"
