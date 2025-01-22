@@ -43,7 +43,7 @@ __kernel void RenderKernel(__global const BVHNode *bvhNodes,
         if (sampleNum == 0) {
             IntersectInfo isect = IntersectInfoInitNone();
             float2 sample = (float2){hAngle + 0.5f * dhAngle,
-                                     vAngle + 0.5f * dvAngle};
+                                     vAngle - 0.5f * dvAngle};
 
             Ray ray = RayInit((float3){0.0f, 0.0f, 0.0f},
                               normalize((float3){cos(sample.y) * cos(sample.x),
@@ -80,7 +80,7 @@ __kernel void RenderKernel(__global const BVHNode *bvhNodes,
             for (int i = 0; i < sampleNum; i++) {
                 for (int j = 0; j < sampleNum; j++) {
                     float2 sample = (float2){hAngle + (i + Random01(&random)) * subdhAngle,
-                                             vAngle + (j + Random01(&random)) * subdvAngle};
+                                             vAngle - (j + Random01(&random)) * subdvAngle};
 
                     Ray ray = RayInit((float3){0.0f, 0.0f, 0.0f},
                                       normalize((float3){cos(sample.y) * cos(sample.x),
