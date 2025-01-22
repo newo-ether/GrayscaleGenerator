@@ -228,10 +228,10 @@ void Renderer::run() {
 
     // Dispatch Filter Kernel
     cl::Buffer filteredGrayscaleMapBuffer = cl::Buffer(clInterface.getContext(),
-                                            CL_MEM_READ_WRITE,
-                                            sizeof(float) * width * height,
-                                            nullptr,
-                                            &errorCode);
+                                                       CL_MEM_READ_WRITE,
+                                                       sizeof(float) * width * height,
+                                                       nullptr,
+                                                       &errorCode);
     if (errorCode != CL_SUCCESS) {
         returnError(-4);
         return;
