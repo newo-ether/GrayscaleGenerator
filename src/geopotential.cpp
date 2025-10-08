@@ -25,17 +25,18 @@ void add_to(T &presult,const T &rhs){
 template<typename R>
 class grouped_reducer:public std::function<void()>{
 public:
-    R local_sum{};
+    R local_sum;
     bool done{false};
     bool summed{false};
 };
 
-template<typename R,typename F,typename... Args>
-void integrate_parallel(ThreadPool::TaskGroup *pgroup,R *presult,const trigmesh &mesh,F func,Args&&... args){
+template<typename R,typename F,typename ...Args>
+void integrate_parallel(ThreadPool::TaskGroup *pgroup,R *presult,const trigmesh &mesh,F func,const Args &...args){
     auto *pthreadpool=ThreadPool::get_thread_pool();
     if(!pthreadpool){
+        memset(presult,0,sizeof(R));
         for(const auto &t:mesh)
-            add_to(*presult,(t.*func)(std::forward<Args>(args)...));
+            add_to(*presult,(t.*func)(args...));
         return;
     }
     size_t n_tasks=std::max(size_t(1),(mesh.size()+cn_tasksize/2)/cn_tasksize);
@@ -49,8 +50,9 @@ void integrate_parallel(ThreadPool::TaskGroup *pgroup,R *presult,const trigmesh 
             size_t imax=(i+1)*mesh_size/n_tasks;
             task_type &this_task=all_tasks[i];
             R &local_sum=this_task.local_sum;
+            memset(&local_sum,0,sizeof(R));
             for(size_t j=imin;j<imax;++j)
-                add_to(local_sum,(mesh[j].*func)(std::forward<Args>(args)...));
+                add_to(local_sum,(mesh[j].*func)(args...));
             bool free_all=false;
             local_mutex->lock();
             do{
